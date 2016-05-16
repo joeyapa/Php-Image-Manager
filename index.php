@@ -6,7 +6,7 @@
 
 	The MIT License (MIT)
 
-	Copyright (c) 2015 Joey Albert Abano		
+	Copyright (c) 2015-2016 Joey Albert Abano		
 
 	Permission is hereby granted, free of charge, to any person obtaining a copy
 	of this software and associated documentation files (the "Software"), to deal
@@ -33,8 +33,14 @@
 	- images will be dump in a directory <original>, PIG will scan directory store information in an sqlite database
 	- PIG will generate thumbnails and resized images on target directory
 
+	Future Implementation
+	- Clean: it will not preform a full rebuild but instead it will scan the _SOURCEPATH for changes, and remove 
+	    database inconsistencies.
+	- Label: images can have label marks, this would allow grouping and filtering
 
 */
+
+
 define('_SOURCEPATH', 'raw/'); // source directory
 define('_TARGETPATH','processed/'); // processed directory
 define('_DBFILEPATH','db/pig.db'); // database location
@@ -43,9 +49,16 @@ define('_TARGETURL','http://localhost/pig/processed/'); // processed url path
 
 
 /**
- *  PigProcess
+ *  @Classname: PigProcess
+ *  @Description:
+ *    Performs the core image processing.
  *
- *
+ *    build
+ *    rebuild 
+ *    fetch
+ *    modify
+ *    upload 
+ *  
  */
 class PigProcess {
 
@@ -55,55 +68,123 @@ class PigProcess {
 	function __construct() {
 	}
 
-	// rebuild image reference between $source and $processed, check new files based on filename and date 
+	/*
+		@Method build
+		@Parameters 
+		  $source_path
+		  $processed_path
+		  $config
+	    @Description
+	      build image reference between $source_path and $processed_path, check new files based on filename and date 
+	 */ 
 	function build($source_path, $processed_path, $config = array('droptables'=>FALSE)) {
-		// check the list of files in the database
-		// generate the list of new files in the raw directory. generate the list of missing files.
-		// 
-
-		// get the last build from database
-		// perform scale_image using the last processed datetime as reference
+		// i. update class instance values
 		$this->source_path = $source_path;
 		$this->processed_path = $processed_path;
 
-		// create directory if not existing		
+		// ii. create processed directory if it doesn't exist
 		if ( !is_dir($processed_path) ) {
 			mkdir($processed_path, 0700, true);
 		}
 
-
-		// 1. run the process in the background. recommended that it is shot at an ajax request. check the status based on the db
+		// 1. run the process in the background. check the status based on the db.
 		ignore_user_abort(true); 
 		set_time_limit(0);
 
+		// 2. generate the scaled images
 		$db = new PigSqlite();
 		$db->initialize($config);
 		$db->opendb();
-		$this->scale_image_directory($db, $this->source_path); // YYYY-MM-DD strtotime("2002-12-30")
+		$this->scale_image_directory($db, $this->source_path);
 		$db->close();
 
 
 	}
 
-	// full build, removing all files in the $processed directory. warn: delete database reference and processed path. 
+	/*
+		@Method rebuild
+		@Parameters 
+		  $source_path
+		  $processed_path
+	    @Description
+	      full build, removing all files in the $processed_path directory. 
+	    @Warn
+	      delete db reference and processed path contents. 
+	 */ 
 	function rebuild($source_path, $processed_path) {		
 		$config = array('droptables'=>TRUE);
 
+		// i. single depth. clear images in the processed_path
 		if ( is_dir($processed_path) ) {
-    		$this->rrmdir( $processed_path ); // single depth 
+    		$this->rrmdir( $processed_path ); 
 		}
 
-		
+		// 1. run build process
 		$this->build($source_path, $processed_path, $config);
 	}
 
-	function list_images($page_no=1) {
-		// retrieve list in json format
-		//{totalpages, currentpage, totalfiles, data:[{},] }
-
+	/*
+		@Method fetch
+		@Parameters 
+		  $page
+	    @Description
+	      retrieves the image list	    
+	 */ 
+	function fetch($page) {
+		$db = new PigSqlite();
+		$db->opendb();
+		echo $db->fetch(array(), (intval($page)-1) * _LIST_NUMROW );
+		$db->close();
 	}
 
-	// $path = directory to be scanned , $processed_datetime = time format, to convert use strtotime
+	/*
+		@Method modify
+		@Parameters 
+		  $page
+	    @Description
+	      retrieves the image list	    
+	 */ 
+	function modify() {
+		$db = new PigSqlite();
+		$db->opendb();
+		$image = array();
+		$image['IMAGE_ID'] = getpost('i',' ');
+		$image['DESCRIPTION'] = getpost('d',' ');
+		$db->modify($image);
+		$db->close();
+		
+	}
+
+	/*
+		@Method upload
+		@Parameters 
+		  $file
+	    @Description
+	      upload file to the source path
+	 */ 
+	function upload($file) {
+		$success = false;
+		$target_file = _SOURCEPATH . basename($file["name"]);
+		$imageFileType = pathinfo($target_file,PATHINFO_EXTENSION);
+    	$check = getimagesize($file["tmp_name"]);
+    	if($check !== false && move_uploaded_file($file["tmp_name"], $target_file) ) {        
+    		$success = true;
+    	}
+    	else {
+    		$success = false;
+    	} 
+    	return $success;       	
+	}	
+
+	/*
+		@Method private scale_image_directory
+		@Parameters 
+		  $db - database class instance
+		  $path - string, directory to be scanned 
+		  $processed_datetime - int|boolean, to convert use strtotime
+	    @Description
+	      recursive loop to target process directory for scaling
+	 */ 
 	private function scale_image_directory($db, $path, $processed_datetime = FALSE) {
 		$sql = '';
 		foreach (new DirectoryIterator($path) as $filename) {
@@ -117,14 +198,24 @@ class PigProcess {
 		}
 	}
 
-
+	/*
+		@Method private scale_image
+		@Parameters 
+		  $db - database class instance
+		  $imgwidth - int, image width information
+		  $imgheight - int, image height information
+		  $filename - string, image file name
+		  $filepath - string, image file path
+	    @Description
+	      generate thumbnail, view and full web image sizes
+	 */
 	private function scale_image($db, $imgwidth, $imgheight, $filename, $filepath) {
 		
     	$uid = strtoupper(uniqid()); // generate unique identifier
     	$timg_uid = 'THB_'.$uid.'.JPG';
     	$wimg_uid = 'WEB_'.$uid.'.JPG';
     	$oimg_uid = 'IMG_'.$uid.'.JPG';
-    	$filemtime = filemtime($filepath);
+    	$filemtime = filemtime($filepath); // retrieve file modification time
 
     	$imagedb = $db->save(array('IMAGE_ID'=>$uid,'DESCRIPTION'=>'','WIDTH'=>$imgwidth,'HEIGHT'=>$imgheight,'ORG_FILENAME'=>$filename,
     		'ORG_FILEPATH'=>$filepath,'CODE_128'=>$timg_uid,'CODE_512'=>$wimg_uid,'CODE_1024'=>$oimg_uid,'FILEMTIME'=>$filemtime));
@@ -133,9 +224,9 @@ class PigProcess {
 			if( $imgwidth > $imgheight ) { // landscape	    		
 				$resource = imagescale( imagecreatefromjpeg($filepath) , 128);
 					imagejpeg($resource , $this->processed_path . $timg_uid);	
-					$resource = imagescale( imagecreatefromjpeg($filepath) , 512); //512x320
+					$resource = imagescale( imagecreatefromjpeg($filepath) , 512); // 512x320
 					imagejpeg($resource , $this->processed_path . $wimg_uid);			  			
-					$resource = imagescale( imagecreatefromjpeg($filepath) , 1280);//1280x800
+					$resource = imagescale( imagecreatefromjpeg($filepath) , 1280); // 1280x800
 					imagejpeg($resource , $this->processed_path . $oimg_uid);	
 			}
 			else { // portrait
@@ -151,8 +242,15 @@ class PigProcess {
     	return $imagedb;
 	}
 
-	// remove directory
-	function rrmdir($dir,$depth=FALSE) { 
+	/*
+		@Method private rrmdir
+		@Parameters 
+		  $dir - target directory
+		  $depth - boolean, default FALSE. identify if recursive directory removal
+	    @Description
+	      generate thumbnail, view and full web image sizes
+	 */
+	private function rrmdir($dir,$depth=FALSE) { 
 		if (is_dir($dir)) { 
 			$objects = scandir($dir);
 			foreach ($objects as $object) { 
@@ -165,55 +263,35 @@ class PigProcess {
 		rmdir($dir); 
    	} 
 	
-	function fetch() {
-		$db = new PigSqlite();
-		$db->opendb();
-		echo $db->fetch(array(), (intval($_POST['p'])-1) * _LIST_NUMROW );
-		$db->close();
-	}
 
-	function modify() {
-		$db = new PigSqlite();
-		$db->opendb();
-		$image = array();
-		$image['IMAGE_ID'] = getpost('i',' ');
-		$image['DESCRIPTION'] = getpost('d',' ');
-		$db->modify($image);
-		$db->close();
-		
-	}
-
-	function upload($file) {
-		$success = false;
-		$target_file = _SOURCEPATH . basename($file["name"]);
-		$imageFileType = pathinfo($target_file,PATHINFO_EXTENSION);
-    	$check = getimagesize($file["tmp_name"]);
-    	if($check !== false && move_uploaded_file($file["tmp_name"], $target_file) ) {        
-    		$success = true;
-    	}
-    	else {
-    		$success = false;
-    	} 
-    	return $success;       	
-	}
 	
 }
 
 /**
- *
+ *  @Classname: PigSqlite
+ *  @Extends: SQLite3
+ *  @Description:
+ *    Performs database functions
  *
  */
 class PigSqlite extends SQLite3 {
-	// image: image_id, original_filename, original_filepath, code_filename, 
-	// metadata: image_id
+
 	/*
-	 * i. Initially test for database connection, and perform initialization
-	 */
+		@Method __construct
+	    @Description
+	      initially test for database connection, and perform initialization
+	 */ 	
 	function __construct() {
 		$this->open(_DBFILEPATH);
 		$this->busyTimeout(5000);
 		$this->close();		
 	}
+
+	/*
+		@Method create_tables
+	    @Description
+	      create database if non-existent
+	 */ 	
 	function create_tables () {
 		$sql_create_tables =<<<EOF
 			CREATE TABLE IF NOT EXISTS TBL_IMAGE (
@@ -244,6 +322,13 @@ EOF;
 
 		$ret = $this->exec($sql_create_tables);		
 	}
+
+
+	/*
+		@Method drop_tables
+	    @Description
+	      drop tables for rebuild
+	 */ 	
 	function drop_tables () {
 		$sql_drop_tables =<<<EOF
 			PRAGMA writable_schema = 1;
@@ -255,26 +340,48 @@ EOF;
 		$ret = $this->exec($sql_drop_tables);		
 	}
 
+
+	/*
+		@Method initialize
+		@Parameter
+		  $config 
+	    @Description
+	      Initialized the database
+	 */ 	
 	function initialize($config) {
 		$this->opendb();
 
-		if( $config['droptables']) {
-			$this->drop_tables();
+		if( $config['droptables']) { // force table drop
+			copy(_DBFILEPATH,_DBFILEPATH . '_' . filemtime(_DBFILEPATH) ); // create a backup			 
+			$this->drop_tables(); // drop tables
 		}
 
 		$ret = $this->query('SELECT count(name) as count FROM sqlite_master WHERE type="table" AND name in ("TBL_IMAGE","TBL_METADATA")');
 		$row = $ret->fetchArray(SQLITE3_ASSOC);
-		if( $row['count'] == 0 ) {
+		if( $row['count'] == 0 ) { // create tables if non-existent
 			$this->create_tables();
 		}		
 
 		$this->close();
 	}	
 
+	/*
+		@Method opendb
+	    @Description
+	      Open database connection
+	 */	
 	function opendb() {
 		$this->open(_DBFILEPATH);
 	}
 
+	/*
+		@Method save
+		@Parameter $image array, default array empty
+	    @Description
+	      Insert / Update image information
+	    @Return
+	      inserted or updated image array map
+	 */		
 	function save($image = array()) {
 		
 		$imagedb = $this->get($image['ORG_FILEPATH']);
@@ -310,6 +417,12 @@ EOF;
 		return FALSE;
 	}
 
+	/*
+		@Method modify
+		@Parameter $image array, default array empty
+	    @Description
+	      Partial image update
+	 */	
 	function modify($image) {		
 		$sql = 'UPDATE TBL_IMAGE SET DESCRIPTION=:DESCRIPTION WHERE IMAGE_ID=:IMAGE_ID'; 		
 		$stmt = $this->prepare($sql);			
@@ -318,6 +431,14 @@ EOF;
 		$result = $stmt->execute();							
 	}
 
+	/*
+		@Method get
+		@Parameter $org_filepath string, image original defined file path
+	    @Description
+	      retrieve a specified image information
+	    @Return
+	      $image array map
+	 */	
 	function get($org_filepath) {
 		$sql = 'SELECT * FROM TBL_IMAGE WHERE ORG_FILEPATH=:ORG_FILEPATH';
 		$stmt = $this->prepare($sql);
@@ -334,6 +455,18 @@ EOF;
 		return $arr ;		
 	}
 
+	/*
+		@Method fetch
+		@Parameter 
+		  $labels
+		  $offset
+		  $orderby
+		  $orderdir
+	    @Description
+	      retrieve a specified image information
+	    @Return
+	      json string result
+	 */	
 	function fetch($labels = array(), $offset = 0, $orderby = 'CREATED_DTTM', $orderdir = 'DESC') {
 
 		$sql = '';
@@ -375,7 +508,12 @@ EOF;
 
 
 
-// controller section
+/**
+ *  @Inline: Controller
+ *  @Description:
+ *    Performs database functions
+ *
+ */
 
 $pig = new PigProcess();
 switch ( getpost( 'a' ) ) {
@@ -388,19 +526,18 @@ switch ( getpost( 'a' ) ) {
 		echo '{"response":"success"}';	
 		exit(1);
 	case 'j': // request for the json list
-		$pig->fetch();
+		$pig->fetch( $_POST['p'] );
 		exit(1);
 	case 'u': // update image details information
 		$pig->modify();
 		echo '{"response":"success"}';	
 		exit(1);
 	case 'p': // upload images
-		//
-		$fc = 0;
-		$mg = '';
+		$fc = 0; $mg = ''; $bl = 0;
 		while ( isset( $_FILES["file".$fc] ) ) {
 			if ( $pig->upload( $_FILES["file".$fc] ) ) {
-				$mg = $mg . '"'.$fc.'":"success",';
+				$mg = $mg . '"'.$fc.'":"success",';				
+				$bl = $bl + 1;
 			}
 			else {
 				$mg = $mg . '"'.$fc.'":"failed",';
@@ -408,10 +545,14 @@ switch ( getpost( 'a' ) ) {
 			$fc++;
 
 		}
+		// build projecct if there is more than 1 successful upload
+		if($bl > 0) {
+			$pig->build(_SOURCEPATH,_TARGETPATH);
+		}
+
 		echo '{"response":{'.trim($mg, ",").'}';	
 		exit(1);
-	default:
-		# code...
+	default:		
 		break;
 }
 
@@ -449,52 +590,48 @@ function getpost( $str , $ret = FALSE) {
 
 	<style type="text/css">
 		body {background: #222; color: #eee; }
+		
+		div.main{ margin-top:12px; }
+		
 		p.ui-img-description{ font-size:11px; margin:4px 0px 0px 0px; }
+		
 		div.image-content-modal .img-responsive { display:block; text-align:center; margin: 0 auto; }
+		
 		textarea.ui-label-inputs { background: #222; border:none; width:100%; font-size:11px; }
+		
 		p.ui-url-link { font-size:11px; }
 
 		div.modal-content{ background: #222; }
 
-		div.ui-item-photo{ border: solid 1px #888; display: inline-block; height: 178px; margin: 4px; width: 138px; 
-			 vertical-align: top; padding: 4px; border-radius: 4px;
+		div.ui-item-photo{ 
+			border: solid 1px #888; display: inline-block; height: 178px; margin: 4px; width: 138px; 
+			vertical-align: top; padding: 4px; border-radius: 4px;
 		}
 					
-			.btn-file {
-			    position: relative;
-			    overflow: hidden;
-			}
-			.btn-file input[type=file] {
-			    position: absolute;
-			    top: 0;
-			    right: 0;
-			    min-width: 100%;
-			    min-height: 100%;
-			    font-size: 100px;
-			    text-align: right;
-			    filter: alpha(opacity=0);
-			    opacity: 0;
-			    outline: none;
-			    background: white;
-			    cursor: inherit;
-			    display: block;
-			}
+		span.btn-file { position: relative; overflow: hidden; }
+		span.btn-file input[type=file] { 
+			background: white; cursor: inherit; display: block; font-size: 100px;
+			min-height: 100%; min-width: 100%; opacity: 0; outline: none; position: absolute; 
+		    right: 0; text-align: right; filter: alpha(opacity=0);  top: 0; 		    
+		}
 	</style>
+
 
 	<script type="text/javascript">
 		var URLP = '<?php echo _TARGETURL; ?>';
 
+		/*  Define dom on ready
+		 */		
 		$(document).ready(function(){
 			list_images(1);
 			$('#btn-build').click( ajax_build );
 			$('#btn-rebuild').click( ajax_rebuild );
-
+			$('#file-upload').change( ajax_upload );
 		});
 
-		function ajax_loading(valeur) {
-
-			
-			
+		/*   Display the loading modal
+		 */
+		function ajax_loading(valeur) {						
 			if ( valeur < 0) {
 				$('.progress-bar').addClass('progress-bar-danger');				
 				$('.progress-bar').removeClass('progress-bar-success');					
@@ -510,10 +647,11 @@ function getpost( $str , $ret = FALSE) {
 				$('.progress-value').text(valeur + '% Loading...');
 				$('.progress-bar').css('width', valeur+'%').attr('aria-valuenow', valeur);  
 			}
-
 			return valeur;
 		}
 
+		/*  Build function
+		 */
 		function ajax_build(e) {
 
 			$('#loading-view-modal').modal({backdrop: 'static', keyboard: false, show:true});
@@ -543,32 +681,91 @@ function getpost( $str , $ret = FALSE) {
 			});
 		}
 
+		/*  Rebuild function
+		 */
 		function ajax_rebuild() {
+			var _content = 'Rebuilding will DELETE and RECREATE all database record, ' + 
+				'previously generated images will be deleted. ' +
+				'Do you still want to continue rebuild?';
 
-			$('#loading-view-modal').modal({backdrop: 'static', keyboard: false, show:true});
+			$('#confirm-view-modal .modal-body').html(_content);
 
+			// define continue button 
+			$('#confirm-view-modal .btn-primary').unbind();
+			$('#confirm-view-modal .btn-primary').click('.btn-primary', function (e) {            
+				e.stopPropagation();
+				$('#confirm-view-modal').modal('hide');
+			    $('#loading-view-modal').modal({backdrop: 'static', keyboard: false, show:true});
+
+			    // display loading section
+				var ld,tmr=1;
+				ajax_loading(tmr);
+				ld = setInterval(function(){ tmr = tmr <= 90 ? ajax_loading(tmr)+1 : tmr; },300+(tmr*2));
+
+				$.ajax({ url: "index.php", dataType:'json', method:'POST', data:('a=r'), cache:false, context: document.body })
+				.done(function(rs) { 
+					setTimeout(function(){ 
+						clearTimeout(ld);
+						ajax_loading(90);
+						setTimeout(function(){ 
+							ajax_loading(100);
+							list_images();
+							$('#loading-view-modal').modal('toggle');
+						}, 600);	
+					}, 2000);			
+				})
+				.fail(function(ex){ 
+					console.error(ex);
+					ajax_loading(-1);
+				});
+			});
+
+			// define cancel button 
+			$('#confirm-view-modal .btn-default').unbind();
+			$('#confirm-view-modal .btn-default').click('.btn-default', function (e) {            
+				e.stopPropagation();
+				$('#confirm-view-modal').modal('hide');
+			});
+
+			// display confirm modal
+			$('#confirm-view-modal').modal({ backdrop: 'static', keyboard: false });
+		}
+
+		/*  allows image upload via ajax. html5 implementation.
+		 */
+		function ajax_upload() {				
+			// display loading section
 			var ld,tmr=1;
 			ajax_loading(tmr);
+			ld = setInterval(function(){ tmr = tmr <= 90 ? ajax_loading(tmr)+1 : tmr; },300+(tmr*2));
 
-			ld = setInterval(function(){
-				tmr = tmr <= 90 ? ajax_loading(tmr)+1 : tmr;
-			},300+(tmr*2));
+			var fd = new FormData();
+			for(i=0;i<this.files.length;i++){
+				fd.append("file"+i, this.files[i]);	
+			}
 
-			$.ajax({ url: "index.php", dataType:'json', method:'POST', data:('a=r'), cache:false, context: document.body })
-			.done(function(rs) { 
+			fd.append("a", "p");		
+ 
+			$.ajax({
+			 url: 'index.php',
+			 type: 'POST',
+			 data: fd,
+			 async: false,
+			 cache: false,
+			 processData: false,
+			 contentType: false,	     
+			 enctype: 'multipart/form-data'	     
+			}).done(function(response){
+				console.debug('response:',response);
+				clearTimeout(ld);
+				ajax_loading(90);
 				setTimeout(function(){ 
-					clearTimeout(ld);
-					ajax_loading(90);
-					setTimeout(function(){ 
-						ajax_loading(100);
-						list_images();
-						$('#loading-view-modal').modal('toggle');
-					}, 600);	
-				}, 2000);			
-			})
-			.fail(function(ex){ 
+					ajax_loading(100);
+					list_images();
+					$('#loading-view-modal').modal('close');
+				}, 600);
+			}).error(function(ex){
 				console.error(ex);
-				ajax_loading(-1);
 			});
 		}
 
@@ -701,14 +898,17 @@ function getpost( $str , $ret = FALSE) {
 		
 
 
+	
+
+	
+
 	</script>
 
 </head>
 <body>
-<div class="container">
-	<div style="margin:12px 0px 0px 0px;">		
 
-	</div>
+<!-- /.main.container-->
+<div class="main container">	
 	<div class="container">		
 		<form class="form-inline" role="form">
 			<div class="form-group">
@@ -720,51 +920,16 @@ function getpost( $str , $ret = FALSE) {
 				<a id="btn-rebuild" href="#" class="btn btn-primary btn-sm" role="button">Rebuild</a>
 			</div>
 			<div class="form-group">
-				<span class="btn btn-primary btn-file btn-sm"> Browse <input id="file-upload" type="file" multiple></span>
+				<span class="btn btn-primary btn-file btn-sm">Browse <input id="file-upload" type="file" multiple></span>
 			</div>
 		</form>
-
 	</div>
-	<script type="text/javascript">
-
-	$('#file-upload').change(function(e){
-		
-		var fd = new FormData();
-		for(i=0;i<this.files.length;i++){
-			fd.append("file"+i, this.files[i]);	
-		}
-		
-		fd.append("a", "p");		
-
-		$.ajax({
-	     url: 'index.php',
-	     type: 'POST',
-	     data: fd,
-	     async: false,
-	     cache: false,
-	     processData: false,
-	     contentType: false,	     
-	     enctype: 'multipart/form-data'	     
-	   }).done(function(response){
-	   	console.debug('response:',response);
-	   }).error(function(ex){
-	   	console.error(ex);
-	   });
-
-	});
-
-	</script>
-
-
-
-
-
 	<div id="ui-container-photo" class="container"></div>
-	<div class="container"><ul class="pagination bottom-pagination"></ul></div>
-	
+	<div class="container"><ul class="pagination bottom-pagination"></ul></div>	
 </div>
+<!-- end/.main.container-->
 
-
+<!-- /#image-view-modal .modal.fade-->
 <div id="image-view-modal" class="modal fade" role="dialog">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -781,7 +946,9 @@ function getpost( $str , $ret = FALSE) {
     </div>
   </div>
 </div>
+<!-- end/#image-view-modal .modal.fade-->
 
+<!-- /#loading-view-modal .modal.fade-->
 <div id="loading-view-modal" class="modal fade" role="dialog">
   <div class="modal-dialog">
     <div class="modal-content">
@@ -798,9 +965,21 @@ function getpost( $str , $ret = FALSE) {
     </div>
   </div>
 </div>
+<!-- end/#loading-view-modal .modal.fade-->
 
-
+<!-- /#confirm-view-modal .modal.fade-->
+<div id="confirm-view-modal" class="modal fade" role="dialog">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-body"></div>      
+      <div class="modal-footer">				
+		<input type="button" data-dismiss="modal" class="btn btn-primary" value="Yes" >
+		<input type="button" data-dismiss="modal" class="btn btn-default" value="Cancel" >
+	  </div>
+    </div>
+  </div>
+</div>
+<!-- end/#confirm-view-modal .modal.fade-->
 
 </body>
 </html>
-
