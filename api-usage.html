@@ -1,0 +1,211 @@
+<!--	
+	Project Name: PIG Api Demo - Php ImaGe Manager Api Demo
+	Author: Joey Albert Abano
+	Open Source Resource: GITHub
+
+	The MIT License (MIT)
+
+	Copyright (c) 2016 Joey Albert Abano		
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in
+	all copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+	THE SOFTWARE.	
+
+
+
+-->
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Demo Usage of PIG Api</title>
+	<meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="PIG Manager Api">
+    <meta name="author" content="Joey Albert Abano">
+
+	<link href="//ajax.googleapis.com/ajax/libs/jqueryui/1.11.4/themes/smoothness/jquery-ui.css" rel="stylesheet" type='text/css'>
+
+	<script src="//ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js" type="text/javascript"></script>		
+	<script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.11.4/jquery-ui.min.js" type="text/javascript"></script>  	
+
+	<script type="text/javascript">
+		$(document).ready(function(){
+			var api = new PigAPI({album:'div.album',url:'api.php'});
+			api.generate();
+		});
+
+		/*
+
+		*/
+		function PigAPI( param ){
+			var self  = this;
+			
+			self.album = $( param.album );
+			self.url = param.url;
+
+			self._css_nav_control = {'cursor':'pointer','margin-right':'12px'};
+			self._css_dlcl_control = {'cursor':'pointer','margin-left':'12px'};
+			self._css_nav = {'float':'left'};
+			self._css_dlcl = {'float':'right'};
+
+			self.el = $( document.createElement('div') ); 
+			$('body').append( self.el );
+
+			self.album.css({margin:'0px',padding:'0px','line-height':'0px'});
+
+			self.kdn = 0; 
+			setInterval(function(){ if( self.kdn>0 ) self.kdn--; },100); 
+		}
+
+		PigAPI.prototype.winshowscroll = function(){
+			setTimeout(function(){
+				document.documentElement.style['overflow-x'] = 'auto';  document.body.scroll = "yes"; // firefox, chrome, ie only
+			},500);	
+		}
+
+		PigAPI.prototype.winhidescroll = function(){
+			document.documentElement.style['overflow-x'] = 'hidden'; document.body.scroll = "no"; // firefox, chrome, ie only
+		}
+
+		PigAPI.prototype.dialogclose = function(e, api){			
+			api.el.dialog({ hide: { effect:'drop', direction:'up', duration: 300 } });
+			api.el.dialog('close');
+			api.el.dialog({ show: { effect:'drop', direction:'up', duration: 500 } });
+			$(document).unbind('keydown');		
+		}
+
+		PigAPI.prototype.thbclick = function(e, self, api){ 
+			e.stopPropagation();
+
+			var pdata = $.data(self,'pig-data');
+			var pidx = $.data(self,'pig-data-index');
+			var mxi = $.data(api.album,'pig-data-mxi');
+			var f = $(document.createElement('img'));			
+			var dcc = $(document.createElement('div')) ;
+
+			f.attr('src',pdata.FULL);			
+			api.el.empty(); 
+			api.el.append(f);					
+			api.el.append(dcc);
+			
+			$(dcc).html('loading image').css({'font-size':'11px'});
+
+			f.hide().load(function() { 
+				$(this).css({padding:0,display:'block',margin:'0 auto','max-height':($(window).height()-90)});
+				api.el.dialog( "open" );
+				$(this).fadeIn(1200); 
+				api.dialogcontrols( dcc, pdata, pidx, mxi, api );
+			});
+
+		}
+
+		PigAPI.prototype.dialogcontrols = function( dcc, pdata, pidx, mxi, api ){
+			var fn_dn = function(e) { $(this).attr('href',f.src); }
+			var fn_prev = function(e){ api.dialognav(e, 'right', 'left', pidx>0, pidx-1, api); }
+			var fn_next = function(e){  api.dialognav(e, 'left', 'right', pidx<mxi, pidx+1, api); }
+			var fn_dclose = function(e){ api.dialogclose(e,api); }
+			var dc = function(e){ return $( document.createElement(e) ); };
+
+			var s1=dc('span'), s2=dc('span'), pr=dc('a'), ne=dc('a'), dn=dc('a'), cs=dc('a'); 
+
+			pr.append('Previous').unbind().click(fn_prev).css(api._css_nav_control);
+			ne.append('Next').unbind().click(fn_next).css(api._css_nav_control);
+			dn.append('Download').unbind().click(fn_dn).attr('download',pdata.IMAGE_ID).css(api._css_dlcl_control);
+			cs.append('Close').unbind().click( fn_dclose ).css(api._css_dlcl_control);
+
+			s1.append(pr).append(ne).css( api._css_nav ); s2.append(dn).append(cs).css( api._css_dlcl );
+
+			dcc.html('').append(s1).append(s2);
+
+			$(document).unbind().keydown(function(e) {
+				switch(e.which) {
+					case 37: fn_prev(e); break; // left						        
+					case 38: fn_prev(e); break; // up						        
+					case 39: fn_next(e); break; // right
+					case 40: fn_next(e); break; // down
+					default: return; // exit this handler for other keys
+				}
+				e.preventDefault(); // prevent the default action (scroll / move caret)
+			});
+		}
+
+		PigAPI.prototype.dialognav = function(e, dir1, dir2, rule, pidx, api){
+			e.preventDefault(); if( api.kdn>0 ) return; kdn = 10;
+			if( rule ) {
+				api.winhidescroll();
+				api.el.dialog({ hide: { effect:'drop', direction:dir1, duration: 300 } });
+				api.el.dialog('close');
+				api.el.dialog({ show: { effect:'drop', direction:dir2, duration: 500, complete:api.winshowscroll } });							
+				setTimeout(function(){									
+					api.album.find('img.pig-index-' + pidx).trigger('click'); 	
+				},500);									
+			}			
+			else {
+				api.el.parent().effect('shake',{distance:10,times:2},500);
+			}									
+		}
+
+		PigAPI.prototype.generate = function(){
+			var self = this; 
+
+			var ajaxdef = { url:this.url, dataType:'json', method:'POST', data:('r='+self.album.attr('pig-data')), cache:false, context:document.body }								
+			var fn_imgfadein = function(){ $(this).fadeIn(700); } // element fade-in function
+			
+			var fn_dclose = function(e){ self.dialogclose(e,self) }; // dialog box close command
+
+			// define popup dialog. remove title bar
+			this.el.dialog({
+				autoOpen: false, modal: true, width:'auto', resizable: false, closeOnEscape: true,
+				show: { effect:'drop', direction:'up', duration: 500, complete:self.winshowscroll },
+				hide: { effect:'drop', direction:'up', duration: 300 },
+				open: function(event, ui) {
+					$('.ui-widget-overlay', ui.dialog | ui).bind('click', fn_dclose );										
+					self.winshowscroll();
+				},
+		    }); 
+		    this.el.siblings('.ui-dialog-titlebar').remove();
+
+			// ajax request for the list of images
+			$.ajax( ajaxdef ).done(function(rs) { 					
+				// generate thumbnail display		
+				for(i=0;i<rs.data.length;i++){
+					var g = document.createElement('img');
+					g.src = rs.data[i].ICON;
+					$(g).addClass('pig-index-'+i);
+					$.data(g,'pig-data',rs.data[i]);
+					$.data(g,'pig-data-index',i);					
+					self.album.append(g);
+				}								
+				// store pig data in the album element
+				$.data(self.album,'pig-data',rs);	
+				$.data(self.album,'pig-data-mxi',rs.data.length-1);
+				// define events for each thumbnail
+				$("div.album img").hide().load( fn_imgfadein ).click( function(e){ self.thbclick(e,this,self); } ).hover(
+					function(e){ e.stopPropagation(); $(this).fadeTo( 400,0.6); },
+					function(e){ e.stopPropagation(); $(this).fadeTo( 400,1); }
+				);
+			}).fail(function(ex){ console.error(ex); });
+
+		}
+
+	</script>
+</head>
+<body>
+	<div class="content album" pig-data="raw\copies\"></div>
+</body>
+</html>
